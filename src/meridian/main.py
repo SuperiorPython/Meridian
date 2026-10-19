@@ -2,6 +2,7 @@ from datetime import date
 from functools import lru_cache
 
 import httpx
+import pandas as pd
 from fastapi import Depends, FastAPI, HTTPException, Query
 
 from meridian import __version__
@@ -15,6 +16,7 @@ from meridian.data.edgar import (
 )
 from meridian.analysis.metrics import compute_metrics, is_financial_sic, ttm_summary
 from meridian.analysis.valuation import compute_valuation, current_valuation
+from meridian.analysis.report import report_from_facts
 from meridian.data.ttm import extract_ttm
 from meridian.data.fundamentals import (
     extract_annual,
@@ -51,6 +53,20 @@ def edgar_http_error(exc: EdgarError) -> HTTPException:
     return HTTPException(status_code=502, detail=str(exc))
 
 
+def load_company(ticker: str, client: EdgarClient):
+    """Validate the ticker, then fetch the SEC company record and facts."""
+    try:
+        ticker = PriceService.clean_ticker(ticker)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    try:
+        comp = client.lookup_company(ticker)
+        facts = client.get_company_facts(comp)
+    except EdgarError as exc:
+        raise edgar_http_error(exc)
+    return ticker, comp, facts
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "version": __version__, "env": get_settings().env}
@@ -80,15 +96,7 @@ def prices(
 
 @app.get("/companies/{ticker}")
 def company(ticker: str, client: EdgarClient = Depends(get_edgar_client)) -> dict:
-    try:
-        ticker = PriceService.clean_ticker(ticker)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-    try:
-        comp = client.lookup_company(ticker)
-        facts = client.get_company_facts(comp)
-    except EdgarError as exc:
-        raise edgar_http_error(exc)
+    ticker, comp, facts = load_company(ticker, client)
 
     return {
         "cik": comp.cik,
@@ -107,15 +115,7 @@ def fundamentals(
     years: int = Query(10, ge=1, le=50),
     client: EdgarClient = Depends(get_edgar_client),
 ) -> dict:
-    try:
-        ticker = PriceService.clean_ticker(ticker)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-    try:
-        comp = client.lookup_company(ticker)
-        facts = client.get_company_facts(comp)
-    except EdgarError as exc:
-        raise edgar_http_error(exc)
+    ticker, comp, facts = load_company(ticker, client)
 
     annual = extract_annual(facts)
     # Window by the most recent distinct fiscal periods across ALL metrics, so a metric
@@ -178,15 +178,7 @@ def analysis(
     years: int = Query(10, ge=1, le=50),
     client: EdgarClient = Depends(get_edgar_client),
 ) -> dict:
-    try:
-        ticker = PriceService.clean_ticker(ticker)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-    try:
-        comp = client.lookup_company(ticker)
-        facts = client.get_company_facts(comp)
-    except EdgarError as exc:
-        raise edgar_http_error(exc)
+    ticker, comp, facts = load_company(ticker, client)
 
     try:
         sic, sic_description = client.get_sic(comp)
@@ -249,15 +241,7 @@ def valuation(
     client: EdgarClient = Depends(get_edgar_client),
     price_service: PriceService = Depends(get_price_service),
 ) -> dict:
-    try:
-        ticker = PriceService.clean_ticker(ticker)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-    try:
-        comp = client.lookup_company(ticker)
-        facts = client.get_company_facts(comp)
-    except EdgarError as exc:
-        raise edgar_http_error(exc)
+    ticker, comp, facts = load_company(ticker, client)
     try:
         prices = price_service.get_history(ticker)
     except NoDataError as exc:
@@ -295,3 +279,37 @@ def valuation(
         ),
         "periods": periods,
     }
+
+
+@app.get("/report/{ticker}")
+def report(
+    ticker: str,
+    years: int = Query(10, ge=1, le=50),
+    client: EdgarClient = Depends(get_edgar_client),
+    price_service: PriceService = Depends(get_price_service),
+) -> dict:
+    ticker, comp, facts = load_company(ticker, client)
+
+    # Prices are optional here: without them the report is still useful, minus valuation.
+    price_error = None
+    try:
+        prices = price_service.get_history(ticker)
+    except ProviderError as exc:  # includes NoDataError
+        prices, price_error = pd.DataFrame(), str(exc)
+
+    try:
+        sic, sic_description = client.get_sic(comp)
+    except EdgarError:
+        sic, sic_description = None, None
+
+    return report_from_facts(
+        facts,
+        prices,
+        ticker=comp.ticker,
+        cik=comp.cik,
+        sic=sic,
+        sic_description=sic_description,
+        years=years,
+        as_of=date.today(),
+        price_error=price_error,
+    )

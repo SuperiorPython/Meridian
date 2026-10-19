@@ -61,6 +61,8 @@ def _splits(prices: pd.DataFrame) -> pd.Series:
 
 def split_factor_after(splits: pd.Series, d: date) -> float:
     """Product of split ratios with ex-date strictly after `d`."""
+    if splits.empty:
+        return 1.0
     later = splits[splits.index > pd.Timestamp(d)]
     return float(later.prod()) if len(later) else 1.0
 
@@ -144,7 +146,7 @@ def compute_valuation(
         if priced is not None:
             price_date, close = priced
             price_then = close * split_factor_after(splits, price_date)
-        if reported is not None:
+        if reported is not None and have_prices:  # no prices -> no split history either
             factor = split_factor_after(splits, as_of)
             shares_adj = reported * factor
             if close is not None:

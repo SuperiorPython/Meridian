@@ -269,3 +269,17 @@ def test_valuation_errors(use):
     assert no_data.get("/valuation/acme").status_code == 404
     broken = use(prices=StubPrices(error=ProviderError("boom")))
     assert broken.get("/valuation/acme").status_code == 502
+
+
+def test_no_prices_with_shares_does_not_crash():
+    (p,) = run(facts(), pd.DataFrame())
+    assert p.market_cap is None and p.price_date is None
+    assert p.shares_reported == 4_000
+    assert p.split_factor is None and p.shares_adjusted is None
+
+
+def test_prices_without_split_column_assume_no_splits():
+    px = prices_frame().drop(columns=["split"])
+    (p,) = run(facts(), px)
+    assert p.split_factor == 1.0
+    assert p.market_cap == pytest.approx(4_000 * 62.5)
