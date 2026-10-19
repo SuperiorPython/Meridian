@@ -14,6 +14,7 @@ from meridian.data.edgar import (
     TickerNotFound,
 )
 from meridian.analysis.metrics import compute_metrics, is_financial_sic
+from meridian.analysis.valuation import compute_valuation, current_valuation
 from meridian.data.fundamentals import (
     extract_annual,
     extract_cover_shares,
@@ -216,5 +217,70 @@ def analysis(
         "sic_description": sic_description,
         "is_financial": financial,
         "notes": notes,
+        "periods": periods,
+    }
+
+
+VALUATION_NOTES = [
+    "Market cap = shares x price on the first trading day on or after the 10-K "
+    "filing date (point-in-time: no price from before the numbers were public).",
+    "Shares are the 10-K cover-page count converted to today's split basis so they "
+    "match Yahoo's split-adjusted prices; split_factor shows the adjustment applied. "
+    "Where no cover count exists, weighted-average diluted shares are used "
+    "(shares_source = diluted_average).",
+    "Prices are split-adjusted but not dividend-adjusted. price_then is the actual "
+    "closing price that day.",
+    "Ratios use annual (not trailing-twelve-month) fundamentals, so the current "
+    "block can lag the latest quarter by up to a year.",
+]
+
+
+@app.get("/valuation/{ticker}")
+def valuation(
+    ticker: str,
+    years: int = Query(10, ge=1, le=50),
+    client: EdgarClient = Depends(get_edgar_client),
+    price_service: PriceService = Depends(get_price_service),
+) -> dict:
+    try:
+        ticker = PriceService.clean_ticker(ticker)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    try:
+        comp = client.lookup_company(ticker)
+        facts = client.get_company_facts(comp)
+    except EdgarError as exc:
+        raise edgar_http_error(exc)
+    try:
+        prices = price_service.get_history(ticker)
+    except NoDataError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    try:
+        sic, _ = client.get_sic(comp)
+    except EdgarError:
+        sic = None
+
+    financial = is_financial_sic(sic)
+    notes = list(VALUATION_NOTES)
+    if financial:
+        notes.append("Financial company: FCF yield is not shown.")
+
+    annual = extract_annual(facts)
+    covers = extract_cover_shares(facts)
+    window = recent_periods(annual, years)
+    periods = [
+        p.to_dict()
+        for p in compute_valuation(annual, covers, prices, is_financial=financial)
+        if p.period_end in window
+    ]
+    return {
+        "ticker": comp.ticker,
+        "cik": comp.cik,
+        "entity_name": facts.get("entityName"),
+        "is_financial": financial,
+        "notes": notes,
+        "current": current_valuation(annual, covers, prices, is_financial=financial),
         "periods": periods,
     }

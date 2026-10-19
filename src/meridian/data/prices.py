@@ -14,6 +14,7 @@ import pandas as pd
 log = logging.getLogger(__name__)
 
 COLUMNS = ["open", "high", "low", "close", "adj_close", "volume"]
+SPLIT_COLUMN = "split"  # ratio on a split's ex-date (4.0 = 4-for-1), else 0.0
 TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
 DEFAULT_TTL_SECONDS = 12 * 60 * 60
 
@@ -38,7 +39,10 @@ def normalize_frame(raw: pd.DataFrame) -> pd.DataFrame:
     missing = [c for c in COLUMNS if c not in df.columns]
     if missing:
         raise ProviderError(f"provider response missing columns: {missing}")
+    splits = df["stock_splits"] if "stock_splits" in df.columns else 0.0
     df = df[COLUMNS].copy()
+    df[SPLIT_COLUMN] = splits
+    df[SPLIT_COLUMN] = pd.to_numeric(df[SPLIT_COLUMN], errors="coerce").fillna(0.0)
     idx = pd.DatetimeIndex(df.index)
     if idx.tz is not None:
         idx = idx.tz_localize(None)
@@ -103,9 +107,12 @@ class PriceService:
         ticker = self.clean_ticker(ticker)
         path = self._path(ticker)
 
+        df = None
         if self._is_fresh(path):
-            df = self._read(path)
-        else:
+            cached = self._read(path)
+            if SPLIT_COLUMN in cached.columns:  # older caches lack split data: refetch
+                df = cached
+        if df is None:
             try:
                 df = self.provider.fetch_history(ticker)
                 self._write(path, df)
@@ -114,6 +121,8 @@ class PriceService:
                     raise
                 log.warning("provider failed for %s; serving stale cache", ticker)
                 df = self._read(path)
+                if SPLIT_COLUMN not in df.columns:
+                    df[SPLIT_COLUMN] = 0.0
 
         if start is not None:
             df = df.loc[df.index >= pd.Timestamp(start)]

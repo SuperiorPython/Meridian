@@ -25,6 +25,7 @@ def make_frame(n: int = 5) -> pd.DataFrame:
             "close": base,
             "adj_close": base * 0.99,
             "volume": 1000.0,
+            "split": 0.0,
         }
     )
 
@@ -99,7 +100,9 @@ def test_normalize_frame_handles_yfinance_shape():
     raw["Dividends"] = 0.0
     raw.index = raw.index.tz_localize("America/New_York")
     out = normalize_frame(raw)
-    assert list(out.columns) == ["open", "high", "low", "close", "adj_close", "volume"]
+    assert list(out.columns) == [
+        "open", "high", "low", "close", "adj_close", "volume", "split"
+    ]
     assert out.index.tz is None
     assert out.index.name == "date"
 
@@ -138,3 +141,30 @@ def test_prices_endpoint_no_data(tmp_path):
         assert TestClient(app).get("/prices/ZZZZ").status_code == 404
     finally:
         app.dependency_overrides.clear()
+
+
+def test_normalize_frame_keeps_splits():
+    raw = make_frame().drop(columns=["split"])
+    raw = raw.rename(columns=lambda c: c.replace("_", " ").title())
+    raw["Stock Splits"] = [0.0, 0.0, 4.0, 0.0, 0.0]
+    out = normalize_frame(raw)
+    assert out["split"].tolist() == [0.0, 0.0, 4.0, 0.0, 0.0]
+
+
+def test_cache_without_split_column_is_refetched(tmp_path):
+    provider = FakeProvider()
+    service = PriceService(provider, tmp_path)
+    service.cache_dir.mkdir(parents=True, exist_ok=True)
+    make_frame().drop(columns=["split"]).to_csv(service._path("AAPL"))
+    df = service.get_history("AAPL")
+    assert provider.calls == 1
+    assert "split" in df.columns
+
+
+def test_stale_fallback_without_split_column_assumes_no_splits(tmp_path):
+    provider = FakeProvider(error=ProviderError("boom"))
+    service = PriceService(provider, tmp_path)
+    service.cache_dir.mkdir(parents=True, exist_ok=True)
+    make_frame().drop(columns=["split"]).to_csv(service._path("AAPL"))
+    df = service.get_history("AAPL")
+    assert (df["split"] == 0).all()
