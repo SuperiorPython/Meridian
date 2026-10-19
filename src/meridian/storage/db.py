@@ -35,6 +35,28 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_journal_ticker ON journal_entries (ticker, created_at);
     """,
+    # 2: paper portfolio. The ledger of trades is the source of truth; cash, holdings
+    # and performance are always recomputed from it.
+    """
+    CREATE TABLE paper_account (
+        id            INTEGER PRIMARY KEY CHECK (id = 1),
+        starting_cash REAL NOT NULL CHECK (starting_cash > 0)
+    );
+    INSERT INTO paper_account (id, starting_cash) VALUES (1, 100000);
+
+    CREATE TABLE paper_trades (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticker         TEXT NOT NULL,
+        side           TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
+        shares         REAL NOT NULL CHECK (shares > 0),
+        price          REAL NOT NULL CHECK (price > 0),
+        trade_date     TEXT NOT NULL,
+        requested_date TEXT NOT NULL,
+        note           TEXT NOT NULL DEFAULT '',
+        created_at     TEXT NOT NULL
+    );
+    CREATE INDEX idx_paper_trades_date ON paper_trades (trade_date, id);
+    """,
 ]
 
 

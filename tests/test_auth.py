@@ -78,6 +78,8 @@ def test_token_enforced_in_dev_too_when_set(make_client):
     ("get", "/prices/AAPL"), ("get", "/companies/AAPL"), ("get", "/fundamentals/AAPL"),
     ("get", "/analysis/AAPL"), ("get", "/valuation/AAPL"), ("get", "/report/AAPL"),
     ("get", "/auth/check"),
+    ("get", "/paper"), ("put", "/paper/account"), ("get", "/paper/trades"),
+    ("post", "/paper/trades"), ("delete", "/paper/trades/1"), ("get", "/paper/performance"),
 ])
 def test_every_data_endpoint_requires_key(make_client, method, path):
     c = make_client(TOKEN, "prod")

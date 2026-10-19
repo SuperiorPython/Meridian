@@ -1,7 +1,4 @@
 from datetime import date
-from functools import lru_cache
-
-import httpx
 import pandas as pd
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,7 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from meridian import __version__
 from meridian.auth import parse_origins, require_auth
 from meridian.config import get_settings
+from meridian.deps import get_edgar_client, get_price_service
 from meridian.notebook_api import router as notebook_router
+from meridian.paper_api import router as paper_router
 from meridian.data.edgar import (
     EdgarClient,
     EdgarConfigError,
@@ -30,7 +29,6 @@ from meridian.data.prices import (
     NoDataError,
     PriceService,
     ProviderError,
-    YFinanceProvider,
 )
 
 app = FastAPI(title="Meridian", version=__version__)
@@ -43,18 +41,6 @@ app.add_middleware(
 
 # Everything except /health requires the access key.
 protected = APIRouter(dependencies=[Depends(require_auth)])
-
-
-@lru_cache
-def get_price_service() -> PriceService:
-    return PriceService(YFinanceProvider(), get_settings().cache_dir / "prices")
-
-
-@lru_cache
-def get_edgar_client() -> EdgarClient:
-    settings = get_settings()
-    http = httpx.Client(timeout=30, follow_redirects=True)
-    return EdgarClient(http, settings.sec_user_agent, settings.cache_dir / "edgar")
 
 
 def edgar_http_error(exc: EdgarError) -> HTTPException:
@@ -334,4 +320,5 @@ def auth_check(settings=Depends(get_settings)) -> dict:
 
 
 protected.include_router(notebook_router)
+protected.include_router(paper_router)
 app.include_router(protected)
