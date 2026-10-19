@@ -93,7 +93,24 @@ a {
   font-weight: 500;
   color: var(--ink);
   text-decoration: none;
+}
+.nav {
+  display: flex;
+  gap: 1rem;
   margin-right: auto;
+}
+.nav a {
+  color: var(--muted);
+  text-decoration: none;
+  padding: 0.2rem 0;
+  border-bottom: 2px solid transparent;
+}
+.nav a:hover {
+  color: var(--ink);
+}
+.nav a.active {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
 }
 .page,
 .centered {
@@ -417,4 +434,154 @@ input:hover {
   .header {
     flex-wrap: wrap;
   }
+}
+
+/* ---------- forms and lists (watchlist, journal) ---------- */
+
+textarea,
+select {
+  font: inherit;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.55rem 0.7rem;
+  width: 100%;
+}
+textarea {
+  resize: vertical;
+}
+select option {
+  color: #14232e;
+}
+textarea:hover,
+select:hover {
+  border-color: var(--muted);
+}
+.upper {
+  text-transform: uppercase;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.field.grow {
+  flex: 1;
+}
+.field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+.field-row .field {
+  flex: 1 1 9rem;
+}
+.add-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.add-form .field:first-child {
+  width: 8rem;
+}
+.journal-form {
+  display: grid;
+  gap: 1rem;
+}
+.filter {
+  max-width: 12rem;
+  margin-bottom: 0.5rem;
+}
+.empty {
+  margin-top: 1rem;
+}
+.button.secondary {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  text-decoration: none;
+  display: inline-block;
+}
+.actions {
+  margin: 0 0 1.5rem;
+}
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+}
+.link-button.danger {
+  color: var(--low);
+}
+
+.rows,
+.entries {
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0 0;
+  border-top: 1px solid var(--line);
+}
+.row,
+.entry {
+  border-bottom: 1px solid var(--line);
+  padding: 1rem 0;
+  display: grid;
+  gap: 0.4rem;
+}
+.row-main {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+.row-note {
+  max-width: 38rem;
+}
+.inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+.inline-form input {
+  flex: 1;
+  min-width: 10rem;
+}
+.ticker-link {
+  font-family: var(--serif);
+  font-size: 1.35rem;
+  font-weight: 500;
+  color: var(--ink);
+  text-decoration: none;
+}
+.ticker-link:hover {
+  text-decoration: underline;
+}
+.entry-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+}
+.entry h3 {
+  margin: 0;
+  font-weight: 400;
+}
+.decision {
+  font-weight: 500;
+}
+.thesis {
+  white-space: pre-wrap;
+  max-width: 38rem;
+}
+.due {
+  border-left: 3px solid var(--mid);
+  padding-left: 0.7rem;
+}
+.outcome {
+  border-left: 3px solid var(--line);
+  padding-left: 0.7rem;
 }

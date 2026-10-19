@@ -52,3 +52,24 @@ export interface AuthStatus {
   authenticated: boolean;
   auth_enabled: boolean;
 }
+
+export type Decision = "buy" | "sell" | "hold" | "watch" | "pass";
+
+export interface WatchlistItem {
+  ticker: string;
+  note: string;
+  added_at: string;
+}
+
+export interface JournalEntry {
+  id: number;
+  ticker: string;
+  decision: Decision;
+  thesis: string;
+  conviction: number | null;
+  price: number | null;
+  review_on: string | null;
+  created_at: string;
+  outcome_note: string | null;
+  reviewed_at: string | null;
+}

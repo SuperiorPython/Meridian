@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { CategorySection } from "../components/CategorySection";
 import { KeyFigures } from "../components/KeyFigures";
+import { ReportActions } from "../components/ReportActions";
 import type { CategoryKey, Report } from "../types";
 
 const ORDER: CategoryKey[] = ["growth", "profitability", "financial_health", "valuation"];
@@ -77,6 +78,7 @@ export function ReportPage() {
         {report.sic_description ? `, ${report.sic_description}` : ""}
       </p>
       <p className="lede">{report.summary}</p>
+      <ReportActions ticker={report.ticker} close={report.key_figures.close} />
 
       {warnings.length > 0 && (
         <p className="notice">

@@ -75,3 +75,23 @@ export function zoneLabels(key: CategoryKey): [string, string, string] {
 /** Matches the API's cutoffs: 34+ is the middle band, 67+ the top. */
 export const MODERATE_CUTOFF = 34;
 export const STRONG_CUTOFF = 67;
+
+/** Today's date in the viewer's timezone as YYYY-MM-DD. */
+export function todayISO(now: Date = new Date()): string {
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${m}-${d}`;
+}
+
+/** A journal entry is due once its review date arrives and no outcome is written yet. */
+export function isReviewDue(reviewOn: string | null, outcome: string | null, today: string): boolean {
+  return reviewOn !== null && outcome === null && reviewOn <= today;
+}
+
+/** Date part of a stored UTC timestamp, shown in the viewer's timezone. */
+export function dayLabel(timestamp: string | null | undefined): string {
+  if (!timestamp) return DASH;
+  const d = new Date(timestamp);
+  if (Number.isNaN(d.getTime())) return timestamp;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}

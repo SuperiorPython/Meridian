@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   compactMoney,
   dateLabel,
+  dayLabel,
+  isReviewDue,
   multiple,
   percent,
   price,
   ratingTone,
   signalVerdict,
+  todayISO,
   zoneLabels,
 } from "./format";
 
@@ -52,5 +55,24 @@ describe("format", () => {
   it("reverses zone labels for valuation only", () => {
     expect(zoneLabels("growth")).toEqual(["Weak", "Moderate", "Strong"]);
     expect(zoneLabels("valuation")).toEqual(["Elevated", "Moderate", "Inexpensive"]);
+  });
+
+  it("formats today's date in local time with zero padding", () => {
+    expect(todayISO(new Date(2026, 0, 5, 23, 59))).toBe("2026-01-05");
+    expect(todayISO(new Date(2026, 11, 31, 0, 1))).toBe("2026-12-31");
+  });
+
+  it("flags journal entries due for review", () => {
+    expect(isReviewDue("2026-01-01", null, "2026-06-01")).toBe(true);
+    expect(isReviewDue("2026-06-01", null, "2026-06-01")).toBe(true); // the day itself counts
+    expect(isReviewDue("2026-06-02", null, "2026-06-01")).toBe(false);
+    expect(isReviewDue("2026-01-01", "worked", "2026-06-01")).toBe(false);
+    expect(isReviewDue(null, null, "2026-06-01")).toBe(false);
+  });
+
+  it("shows a day label for timestamps", () => {
+    expect(dayLabel(null)).toBe("–");
+    expect(dayLabel("not a date")).toBe("not a date");
+    expect(dayLabel("2026-10-19T17:23:00+00:00")).toMatch(/Oct 1[89], 2026/);
   });
 });

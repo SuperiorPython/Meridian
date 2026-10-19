@@ -4,7 +4,9 @@ import { api, ApiError, getKey, setKey, UNAUTHORIZED_EVENT } from "./api";
 import { Header } from "./components/Header";
 import { Login } from "./components/Login";
 import { Home } from "./pages/Home";
+import { JournalPage } from "./pages/JournalPage";
 import { ReportPage } from "./pages/ReportPage";
+import { WatchlistPage } from "./pages/WatchlistPage";
 import type { AuthStatus } from "./types";
 
 type Session =
@@ -81,6 +83,8 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/report/:ticker" element={<ReportPage />} />
+          <Route path="/watchlist" element={<WatchlistPage />} />
+          <Route path="/journal" element={<JournalPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
