@@ -15,6 +15,7 @@ log = logging.getLogger(__name__)
 
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik10}.json"
+SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik10}.json"
 
 TICKERS_TTL_SECONDS = 7 * 24 * 60 * 60
 FACTS_TTL_SECONDS = 24 * 60 * 60
@@ -57,6 +58,7 @@ class EdgarClient:
         cache_dir: Path,
         tickers_ttl: float = TICKERS_TTL_SECONDS,
         facts_ttl: float = FACTS_TTL_SECONDS,
+        submissions_ttl: float = TICKERS_TTL_SECONDS,
         min_interval: float = MIN_INTERVAL_SECONDS,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
@@ -66,6 +68,7 @@ class EdgarClient:
         self.cache_dir = Path(cache_dir)
         self.tickers_ttl = tickers_ttl
         self.facts_ttl = facts_ttl
+        self.submissions_ttl = submissions_ttl
         self.min_interval = min_interval
         self._sleep = sleep
         self._clock = clock
@@ -148,3 +151,17 @@ class EdgarClient:
             f"facts_{company.cik10}.json",
             self.facts_ttl,
         )
+
+    def get_sic(self, company: Company) -> tuple[int | None, str | None]:
+        """SIC code and description from the company's EDGAR submissions record."""
+        data = self._get_json_cached(
+            SUBMISSIONS_URL.format(cik10=company.cik10),
+            f"submissions_{company.cik10}.json",
+            self.submissions_ttl,
+        )
+        raw = data.get("sic")
+        try:
+            sic = int(raw) if raw not in (None, "") else None
+        except (TypeError, ValueError):
+            sic = None
+        return sic, data.get("sicDescription")

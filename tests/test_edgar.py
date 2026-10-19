@@ -45,6 +45,10 @@ class Fake:
         url = str(request.url)
         if url.endswith("company_tickers.json"):
             return httpx.Response(200, json=TICKERS)
+        if "submissions" in url:
+            return httpx.Response(
+                200, json={"sic": "6021", "sicDescription": "National Commercial Banks"}
+            )
         if "companyfacts" in url:
             if self.facts_status != 200:
                 return httpx.Response(self.facts_status)
@@ -173,3 +177,13 @@ def test_company_endpoint_placeholder_ua(tmp_path):
         assert "MERIDIAN_SEC_USER_AGENT" in r.json()["detail"]
     finally:
         app.dependency_overrides.clear()
+
+
+def test_get_sic_and_cached(tmp_path):
+    client, fake = make_client(tmp_path)
+    comp = client.lookup_company("AAPL")
+    assert client.get_sic(comp) == (6021, "National Commercial Banks")
+    client.get_sic(comp)
+    sub = [r for r in fake.requests if "submissions" in str(r.url)]
+    assert len(sub) == 1
+    assert str(sub[0].url).endswith("CIK0000320193.json")

@@ -13,7 +13,12 @@ from meridian.data.edgar import (
     NoFactsError,
     TickerNotFound,
 )
-from meridian.data.fundamentals import extract_annual
+from meridian.analysis.metrics import compute_metrics, is_financial_sic
+from meridian.data.fundamentals import (
+    extract_annual,
+    extract_cover_shares,
+    recent_periods,
+)
 from meridian.data.prices import (
     NoDataError,
     PriceService,
@@ -114,8 +119,7 @@ def fundamentals(
     # Window by the most recent distinct fiscal periods across ALL metrics, so a metric
     # a company stopped reporting years ago (e.g. GE operating income, last filed for
     # 2012) shows as missing instead of returning stale periods.
-    all_ends = sorted({f.period_end for series in annual.values() for f in series})
-    window = set(all_ends[-years:])
+    window = recent_periods(annual, years)
     metrics = {
         name: [
             {
@@ -139,4 +143,78 @@ def fundamentals(
         "entity_name": facts.get("entityName"),
         "metrics": metrics,
         "missing": [name for name, rows in metrics.items() if not rows],
+        "cover_shares": [
+            {
+                "as_of": c.as_of.isoformat(),
+                "filed": c.filed.isoformat(),
+                "value": c.value,
+                "accession": c.accession,
+            }
+            for c in extract_cover_shares(facts)[-years:]
+        ],
+    }
+
+
+ANALYSIS_NOTES = [
+    "Growth is like-for-like: both years come from the same filing, so restatements "
+    "and spin-offs do not distort it.",
+    "Free cash flow = operating cash flow - cash capex; it excludes assets acquired "
+    "through finance leases, so it is overstated for lease-heavy companies.",
+    "ROE uses average equity when the prior year is available. liabilities_to_equity "
+    "is total liabilities over equity (not interest-bearing debt).",
+    "Values are as first reported; available_from is when every figure for the "
+    "period was public.",
+]
+
+
+@app.get("/analysis/{ticker}")
+def analysis(
+    ticker: str,
+    years: int = Query(10, ge=1, le=50),
+    client: EdgarClient = Depends(get_edgar_client),
+) -> dict:
+    try:
+        ticker = PriceService.clean_ticker(ticker)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    try:
+        comp = client.lookup_company(ticker)
+        facts = client.get_company_facts(comp)
+    except EdgarError as exc:
+        raise edgar_http_error(exc)
+
+    try:
+        sic, sic_description = client.get_sic(comp)
+    except EdgarError:
+        sic, sic_description = None, None  # degrade: sector unknown, metrics still shown
+
+    financial = is_financial_sic(sic)
+    notes = list(ANALYSIS_NOTES)
+    if financial:
+        notes.append(
+            f"Financial company (SIC {sic}): free cash flow metrics are not shown, "
+            "and liabilities_to_equity is not comparable to non-financial companies."
+        )
+    if sic is None:
+        notes.append(
+            "Sector unknown (SIC lookup failed): if this is a bank or insurer, "
+            "cash-flow metrics will be misleading."
+        )
+
+    annual = extract_annual(facts)
+    window = recent_periods(annual, years)
+    periods = [
+        pm.to_dict()
+        for pm in compute_metrics(annual, is_financial=financial)
+        if pm.period_end in window
+    ]
+    return {
+        "ticker": comp.ticker,
+        "cik": comp.cik,
+        "entity_name": facts.get("entityName"),
+        "sic": sic,
+        "sic_description": sic_description,
+        "is_financial": financial,
+        "notes": notes,
+        "periods": periods,
     }

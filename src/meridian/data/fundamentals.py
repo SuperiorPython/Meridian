@@ -7,6 +7,9 @@ Design notes
   Backtests must only use a value on or after its `filed` date (no lookahead).
 - `latest_value`/`latest_filed` reflect the most recent filing of the same tag, which
   may include restatements. Use these for display, not for backtests.
+- `versions` keeps the value from EVERY filing that reported the period. Each 10-K
+  restates prior-year comparatives, so a like-for-like comparison of two years must
+  take both values from the same filing (see `AnnualFact.value_in`).
 - Several XBRL tags can express one metric (and companies switch tags over time), so
   all candidate tags are merged per period.
 """
@@ -14,11 +17,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from typing import NamedTuple
 
-# metric -> (kind, candidate us-gaap tags in priority order)
-METRICS: dict[str, tuple[str, tuple[str, ...]]] = {
-    "revenue": (
+
+class MetricSpec(NamedTuple):
+    kind: str  # "duration" (income/cash-flow) or "instant" (balance sheet)
+    unit: str
+    tags: tuple[str, ...]  # candidate us-gaap tags in priority order
+
+
+METRICS: dict[str, MetricSpec] = {
+    "revenue": MetricSpec(
         "duration",
+        "USD",
         (
             "RevenueFromContractWithCustomerExcludingAssessedTax",
             "Revenues",
@@ -26,29 +37,42 @@ METRICS: dict[str, tuple[str, tuple[str, ...]]] = {
             "RevenueFromContractWithCustomerIncludingAssessedTax",
         ),
     ),
-    "net_income": ("duration", ("NetIncomeLoss", "ProfitLoss")),
-    "operating_income": ("duration", ("OperatingIncomeLoss",)),
-    "operating_cash_flow": (
-        "duration",
-        ("NetCashProvidedByUsedInOperatingActivities",),
+    "net_income": MetricSpec("duration", "USD", ("NetIncomeLoss", "ProfitLoss")),
+    "operating_income": MetricSpec("duration", "USD", ("OperatingIncomeLoss",)),
+    "operating_cash_flow": MetricSpec(
+        "duration", "USD", ("NetCashProvidedByUsedInOperatingActivities",)
     ),
-    "capex": (
+    "capex": MetricSpec(
         "duration",
+        "USD",
         ("PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"),
     ),
-    "total_assets": ("instant", ("Assets",)),
-    "total_liabilities": ("instant", ("Liabilities",)),
-    "stockholders_equity": (
+    "total_assets": MetricSpec("instant", "USD", ("Assets",)),
+    "total_liabilities": MetricSpec("instant", "USD", ("Liabilities",)),
+    "stockholders_equity": MetricSpec(
         "instant",
+        "USD",
         (
             "StockholdersEquity",
             "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
         ),
     ),
+    "diluted_shares": MetricSpec(
+        "duration", "shares", ("WeightedAverageNumberOfDilutedSharesOutstanding",)
+    ),
 }
 
 MIN_ANNUAL_DAYS = 350  # 52/53-week fiscal years are 364 or 371 days
 MAX_ANNUAL_DAYS = 380
+
+
+@dataclass(frozen=True)
+class Version:
+    """One filing's report of a period's value."""
+
+    accession: str
+    filed: date
+    value: float
 
 
 @dataclass(frozen=True)
@@ -63,11 +87,29 @@ class AnnualFact:
     tag: str
     latest_value: float
     latest_filed: date
+    versions: tuple[Version, ...] = ()
+
+    def value_in(self, accession: str) -> float | None:
+        """This period's value as reported in a specific filing, if it appears there."""
+        for v in self.versions:
+            if v.accession == accession:
+                return v.value
+        return None
 
 
-def _candidates(concept: dict, kind: str):
-    """Yield raw USD fact entries from 10-K filings that match the metric kind."""
-    for entry in concept.get("units", {}).get("USD", []):
+@dataclass(frozen=True)
+class CoverShares:
+    """Shares outstanding from a 10-K cover page (as of a date shortly before filing)."""
+
+    as_of: date
+    filed: date
+    accession: str
+    value: float
+
+
+def _candidates(concept: dict, kind: str, unit: str):
+    """Yield raw fact entries from 10-K filings that match the metric kind."""
+    for entry in concept.get("units", {}).get(unit, []):
         if not str(entry.get("form", "")).startswith("10-K"):
             continue
         if not all(k in entry for k in ("end", "val", "filed")):
@@ -90,10 +132,10 @@ def extract_annual(company_facts: dict) -> dict[str, list[AnnualFact]]:
 
     # Pass 1: gather candidates per metric as (end, tag_index, tag, entry).
     gathered: dict[str, list[tuple[str, int, str, dict]]] = {}
-    for metric, (kind, tags) in METRICS.items():
+    for metric, spec in METRICS.items():
         rows = []
-        for idx, tag in enumerate(tags):
-            for entry in _candidates(us_gaap.get(tag, {}), kind):
+        for idx, tag in enumerate(spec.tags):
+            for entry in _candidates(us_gaap.get(tag, {}), spec.kind, spec.unit):
                 rows.append((entry["end"], idx, tag, entry))
         gathered[metric] = rows
 
@@ -101,16 +143,16 @@ def extract_annual(company_facts: dict) -> dict[str, list[AnnualFact]]:
     # values are only kept at those dates.
     fy_ends = {
         end
-        for metric, (kind, _) in METRICS.items()
-        if kind == "duration"
+        for metric, spec in METRICS.items()
+        if spec.kind == "duration"
         for end, _, _, _ in gathered[metric]
     }
 
     result: dict[str, list[AnnualFact]] = {}
-    for metric, (kind, _) in METRICS.items():
+    for metric, spec in METRICS.items():
         by_end: dict[str, list[tuple[int, str, dict]]] = {}
         for end, idx, tag, entry in gathered[metric]:
-            if kind == "instant" and fy_ends and end not in fy_ends:
+            if spec.kind == "instant" and fy_ends and end not in fy_ends:
                 continue
             by_end.setdefault(end, []).append((idx, tag, entry))
 
@@ -122,6 +164,23 @@ def extract_annual(company_facts: dict) -> dict[str, list[AnnualFact]]:
             )
             same_tag = [c[2] for c in cands if c[1] == tag]
             latest = max(same_tag, key=lambda e: e["filed"])
+
+            # One version per filing (best-priority tag within a filing).
+            best: dict[str, tuple[int, dict]] = {}
+            for c_idx, _, entry in cands:
+                accn = entry.get("accn")
+                if accn and (accn not in best or c_idx < best[accn][0]):
+                    best[accn] = (c_idx, entry)
+            versions = tuple(
+                sorted(
+                    (
+                        Version(a, date.fromisoformat(e["filed"]), float(e["val"]))
+                        for a, (_, e) in best.items()
+                    ),
+                    key=lambda v: (v.filed, v.accession),
+                )
+            )
+
             start = first.get("start")
             facts.append(
                 AnnualFact(
@@ -135,7 +194,53 @@ def extract_annual(company_facts: dict) -> dict[str, list[AnnualFact]]:
                     tag=tag,
                     latest_value=float(latest["val"]),
                     latest_filed=date.fromisoformat(latest["filed"]),
+                    versions=versions,
                 )
             )
         result[metric] = sorted(facts, key=lambda f: f.period_end)
     return result
+
+
+def recent_periods(annual: dict[str, list[AnnualFact]], years: int) -> set[date]:
+    """The most recent `years` distinct fiscal period ends across ALL metrics.
+
+    Windowing across metrics (not per metric) keeps a metric a company stopped
+    reporting long ago from returning stale periods.
+    """
+    ends = sorted({f.period_end for series in annual.values() for f in series})
+    return set(ends[-years:])
+
+
+def extract_cover_shares(company_facts: dict) -> list[CoverShares]:
+    """Shares outstanding from 10-K cover pages (dei), oldest first.
+
+    Filings with several differing values (e.g. multiple share classes) are skipped
+    rather than guessed at.
+    """
+    concept = (
+        company_facts.get("facts", {})
+        .get("dei", {})
+        .get("EntityCommonStockSharesOutstanding", {})
+    )
+    by_accession: dict[str, list[dict]] = {}
+    for entry in concept.get("units", {}).get("shares", []):
+        if not str(entry.get("form", "")).startswith("10-K"):
+            continue
+        if not all(k in entry for k in ("end", "val", "filed", "accn")):
+            continue
+        by_accession.setdefault(entry["accn"], []).append(entry)
+
+    out = []
+    for accession, entries in by_accession.items():
+        if len({e["val"] for e in entries}) != 1:
+            continue
+        e = entries[0]
+        out.append(
+            CoverShares(
+                as_of=date.fromisoformat(e["end"]),
+                filed=date.fromisoformat(e["filed"]),
+                accession=accession,
+                value=float(e["val"]),
+            )
+        )
+    return sorted(out, key=lambda c: (c.filed, c.accession))
