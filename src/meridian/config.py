@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     env: str = "dev"
     sec_user_agent: str = "Meridian Research unset@example.com"
     cache_dir: Path = Path("data/cache")
+    db_path: Path = Path("data/meridian.db")
 
 
 @lru_cache

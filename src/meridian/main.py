@@ -7,6 +7,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 
 from meridian import __version__
 from meridian.config import get_settings
+from meridian.notebook_api import router as notebook_router
 from meridian.data.edgar import (
     EdgarClient,
     EdgarConfigError,
@@ -31,6 +32,7 @@ from meridian.data.prices import (
 )
 
 app = FastAPI(title="Meridian", version=__version__)
+app.include_router(notebook_router)
 
 
 @lru_cache
