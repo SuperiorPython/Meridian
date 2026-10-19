@@ -3,9 +3,11 @@ from functools import lru_cache
 
 import httpx
 import pandas as pd
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 
 from meridian import __version__
+from meridian.auth import parse_origins, require_auth
 from meridian.config import get_settings
 from meridian.notebook_api import router as notebook_router
 from meridian.data.edgar import (
@@ -32,7 +34,15 @@ from meridian.data.prices import (
 )
 
 app = FastAPI(title="Meridian", version=__version__)
-app.include_router(notebook_router)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=parse_origins(get_settings().cors_origins),
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
+)
+
+# Everything except /health requires the access key.
+protected = APIRouter(dependencies=[Depends(require_auth)])
 
 
 @lru_cache
@@ -74,7 +84,7 @@ def health() -> dict:
     return {"status": "ok", "version": __version__, "env": get_settings().env}
 
 
-@app.get("/prices/{ticker}")
+@protected.get("/prices/{ticker}")
 def prices(
     ticker: str,
     start: date | None = None,
@@ -96,7 +106,7 @@ def prices(
     return {"ticker": service.clean_ticker(ticker), "count": len(rows), "rows": rows}
 
 
-@app.get("/companies/{ticker}")
+@protected.get("/companies/{ticker}")
 def company(ticker: str, client: EdgarClient = Depends(get_edgar_client)) -> dict:
     ticker, comp, facts = load_company(ticker, client)
 
@@ -111,7 +121,7 @@ def company(ticker: str, client: EdgarClient = Depends(get_edgar_client)) -> dic
     }
 
 
-@app.get("/fundamentals/{ticker}")
+@protected.get("/fundamentals/{ticker}")
 def fundamentals(
     ticker: str,
     years: int = Query(10, ge=1, le=50),
@@ -174,7 +184,7 @@ ANALYSIS_NOTES = [
 ]
 
 
-@app.get("/analysis/{ticker}")
+@protected.get("/analysis/{ticker}")
 def analysis(
     ticker: str,
     years: int = Query(10, ge=1, le=50),
@@ -236,7 +246,7 @@ VALUATION_NOTES = [
 ]
 
 
-@app.get("/valuation/{ticker}")
+@protected.get("/valuation/{ticker}")
 def valuation(
     ticker: str,
     years: int = Query(10, ge=1, le=50),
@@ -283,7 +293,7 @@ def valuation(
     }
 
 
-@app.get("/report/{ticker}")
+@protected.get("/report/{ticker}")
 def report(
     ticker: str,
     years: int = Query(10, ge=1, le=50),
@@ -315,3 +325,13 @@ def report(
         as_of=date.today(),
         price_error=price_error,
     )
+
+
+@protected.get("/auth/check")
+def auth_check(settings=Depends(get_settings)) -> dict:
+    """Lets the frontend verify a key at login (401 if wrong)."""
+    return {"authenticated": True, "auth_enabled": bool(settings.api_token)}
+
+
+protected.include_router(notebook_router)
+app.include_router(protected)
