@@ -206,3 +206,28 @@ def test_fundamentals_validation(api):
     assert api.get("/fundamentals/acme?years=0").status_code == 422
     assert api.get("/fundamentals/bad$ticker").status_code == 422
     assert api.get("/fundamentals/NOPE").status_code == 404
+
+
+def test_stale_metric_reported_missing_not_ancient(api):
+    stale_facts = facts_json(
+        {
+            "NetIncomeLoss": [
+                fact("2022-09-30", 2, "2022-11-03", start="2021-09-30"),
+                fact("2023-09-30", 3, "2023-11-03", start="2022-09-30"),
+            ],
+            # company stopped reporting this tag long ago
+            "OperatingIncomeLoss": [
+                fact("2012-09-30", 9, "2012-11-03", start="2011-09-30"),
+            ],
+        }
+    )
+
+    class StaleStub(StubEdgar):
+        def get_company_facts(self, company):
+            return stale_facts
+
+    app.dependency_overrides[get_edgar_client] = lambda: StaleStub()
+    body = api.get("/fundamentals/acme?years=2").json()
+    assert body["metrics"]["operating_income"] == []
+    assert "operating_income" in body["missing"]
+    assert len(body["metrics"]["net_income"]) == 2

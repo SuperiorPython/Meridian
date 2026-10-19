@@ -111,6 +111,11 @@ def fundamentals(
         raise edgar_http_error(exc)
 
     annual = extract_annual(facts)
+    # Window by the most recent distinct fiscal periods across ALL metrics, so a metric
+    # a company stopped reporting years ago (e.g. GE operating income, last filed for
+    # 2012) shows as missing instead of returning stale periods.
+    all_ends = sorted({f.period_end for series in annual.values() for f in series})
+    window = set(all_ends[-years:])
     metrics = {
         name: [
             {
@@ -123,7 +128,8 @@ def fundamentals(
                 "form": f.form,
                 "accession": f.accession,
             }
-            for f in series[-years:]
+            for f in series
+            if f.period_end in window
         ]
         for name, series in annual.items()
     }
