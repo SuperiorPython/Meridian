@@ -335,3 +335,18 @@ def test_analysis_validation(use):
     assert client.get("/analysis/acme?years=0").status_code == 422
     assert client.get("/analysis/bad$ticker").status_code == 422
     assert client.get("/analysis/NOPE").status_code == 404
+
+
+def test_available_from_not_pushed_out_by_a_retroactively_tagged_metric():
+    # capex only appears in the data from a filing two years later (new XBRL tag)
+    facts = build(
+        {
+            "NetIncomeLoss": [fact("2022-12-31", 10, F22, "a22", **Y22)],
+            "Revenues": [fact("2022-12-31", 100, F22, "a22", **Y22)],
+            "PaymentsToAcquirePropertyPlantAndEquipment": [
+                fact("2022-12-31", 5, "2024-02-21", "a23", **Y22)
+            ],
+        }
+    )
+    m = metrics_by_end(facts)[date(2022, 12, 31)]
+    assert m.available_from == date(2023, 2, 1)

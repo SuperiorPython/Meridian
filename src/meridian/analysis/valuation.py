@@ -10,8 +10,9 @@ Why this is subtle
 - Never use `adj_close` here: it is also dividend-adjusted, which distorts market cap.
 - Each fiscal period is priced on the first trading day on or after its 10-K filing
   date, so a backtest never sees a price from before the numbers were public.
-- Ratios use ANNUAL fundamentals, not trailing twelve months, so the `current` block
-  can lag by up to a year of earnings.
+- Per-period ratios use that fiscal year's annual figures. The `current` block uses
+  trailing-twelve-month figures when a 10-Q newer than the latest 10-K exists
+  (`basis == "ttm"`), otherwise annual; the annual P/E is kept alongside for comparison.
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ from datetime import date
 import pandas as pd
 
 from meridian.data.fundamentals import AnnualFact, CoverShares
+from meridian.data.ttm import TTMSnapshot
 
 MAX_PRICE_GAP_DAYS = 7  # price must exist within a week of the filing date
 
@@ -76,25 +78,29 @@ def close_on_or_after(prices: pd.DataFrame, d: date) -> tuple[date, float] | Non
 
 def _ratios(
     market_cap: float | None,
-    ni: AnnualFact | None,
-    rev: AnnualFact | None,
-    equity: AnnualFact | None,
-    ocf: AnnualFact | None,
-    capex: AnnualFact | None,
+    ni: float | None,
+    rev: float | None,
+    equity: float | None,
+    ocf: float | None,
+    capex: float | None,
     is_financial: bool,
 ) -> dict:
     out = {"pe": None, "ps": None, "pb": None, "fcf_yield": None}
     if market_cap is None or market_cap <= 0:
         return out
-    if ni is not None and ni.value > 0:
-        out["pe"] = market_cap / ni.value
-    if rev is not None and rev.value > 0:
-        out["ps"] = market_cap / rev.value
-    if equity is not None and equity.value > 0:
-        out["pb"] = market_cap / equity.value
+    if ni is not None and ni > 0:
+        out["pe"] = market_cap / ni
+    if rev is not None and rev > 0:
+        out["ps"] = market_cap / rev
+    if equity is not None and equity > 0:
+        out["pb"] = market_cap / equity
     if not is_financial and ocf is not None and capex is not None:
-        out["fcf_yield"] = (ocf.value - capex.value) / market_cap
+        out["fcf_yield"] = (ocf - capex) / market_cap
     return out
+
+
+def _v(fact: AnnualFact | None) -> float | None:
+    return None if fact is None else fact.value
 
 
 def _by_end(annual: dict[str, list[AnnualFact]]) -> dict[str, dict[date, AnnualFact]]:
@@ -145,8 +151,8 @@ def compute_valuation(
                 market_cap = shares_adj * close
 
         ratios = _ratios(
-            market_cap, ni, rev, at("stockholders_equity"),
-            at("operating_cash_flow"), at("capex"), is_financial,
+            market_cap, _v(ni), _v(rev), _v(at("stockholders_equity")),
+            _v(at("operating_cash_flow")), _v(at("capex")), is_financial,
         )
         out.append(
             ValuationPoint(
@@ -171,8 +177,9 @@ def current_valuation(
     cover_shares: list[CoverShares],
     prices: pd.DataFrame,
     is_financial: bool = False,
+    ttm: TTMSnapshot | None = None,
 ) -> dict | None:
-    """Latest price x latest 10-K cover shares, against the latest annual figures."""
+    """Latest price x latest cover-page shares, against TTM (else annual) figures."""
     if prices.empty or "close" not in prices.columns:
         return None
     by_end = _by_end(annual)
@@ -201,10 +208,24 @@ def current_valuation(
     close = float(prices["close"].iloc[-1])
     shares_adj = reported * split_factor_after(splits, as_of)
     market_cap = shares_adj * close
-    ratios = _ratios(
-        market_cap, ni, rev, at("stockholders_equity"),
-        at("operating_cash_flow"), at("capex"), is_financial,
+
+    annual_ratios = _ratios(
+        market_cap, _v(ni), _v(rev), _v(at("stockholders_equity")),
+        _v(at("operating_cash_flow")), _v(at("capex")), is_financial,
     )
+    use_ttm = ttm is not None and ttm.basis == "ttm"
+    if use_ttm:
+        v = ttm.values
+        equity = ttm.equity if ttm.equity is not None else _v(at("stockholders_equity"))
+        ratios = _ratios(
+            market_cap, v.get("net_income"), v.get("revenue"), equity,
+            v.get("operating_cash_flow"), v.get("capex"), is_financial,
+        )
+        through = ttm.ytd_end
+    else:
+        ratios = annual_ratios
+        through = end
+
     return {
         "price_date": last_day.isoformat(),
         "close": close,
@@ -212,7 +233,10 @@ def current_valuation(
         "shares_as_of": as_of.isoformat(),
         "shares_adjusted": shares_adj,
         "market_cap": market_cap,
+        "basis": "ttm" if use_ttm else "annual",
+        "through": through.isoformat(),
         "latest_period_end": end.isoformat(),
-        "stale_days": (last_day - end).days,
+        "stale_days": (last_day - through).days,
         **ratios,
+        "annual_pe": annual_ratios["pe"],
     }

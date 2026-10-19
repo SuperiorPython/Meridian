@@ -211,8 +211,11 @@ def recent_periods(annual: dict[str, list[AnnualFact]], years: int) -> set[date]
     return set(ends[-years:])
 
 
-def extract_cover_shares(company_facts: dict) -> list[CoverShares]:
-    """Shares outstanding from 10-K cover pages (dei), oldest first.
+def extract_cover_shares(
+    company_facts: dict, forms: tuple[str, ...] = ("10-K",)
+) -> list[CoverShares]:
+    """Shares outstanding from cover pages (dei), oldest first. 10-K only by default;
+    pass forms=("10-K", "10-Q") to include the more recent quarterly counts.
 
     Filings with several differing values (e.g. multiple share classes) are skipped
     rather than guessed at.
@@ -224,7 +227,7 @@ def extract_cover_shares(company_facts: dict) -> list[CoverShares]:
     )
     by_accession: dict[str, list[dict]] = {}
     for entry in concept.get("units", {}).get("shares", []):
-        if not str(entry.get("form", "")).startswith("10-K"):
+        if not str(entry.get("form", "")).startswith(forms):
             continue
         if not all(k in entry for k in ("end", "val", "filed", "accn")):
             continue

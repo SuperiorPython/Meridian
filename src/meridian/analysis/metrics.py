@@ -7,8 +7,10 @@ Conventions
   after a spin-off) and show growth or decline that never happened.
 - Growth is None when the prior value is missing or <= 0 (percent change from a
   non-positive base is not meaningful), or when the prior fiscal year is not present.
-- Ratios use values as first reported for the period; `available_from` is the date by
-  which every figure for that period was public (no lookahead in backtests).
+- Ratios use values as first reported for the period. `available_from` is the filing
+  date of the 10-K that first published the period's net income (else revenue). A
+  filing's facts become public together; a metric that only appears in the data from a
+  later filing (e.g. a retroactively adopted XBRL tag) does not push the date out.
 - ROE uses average equity (current and same-filing prior year) when the prior year is
   available, else ending equity. None when equity is not positive.
 - Free cash flow = operating cash flow - cash capex. Cash capex excludes assets
@@ -23,6 +25,7 @@ from dataclasses import asdict, dataclass
 from datetime import date
 
 from meridian.data.fundamentals import MAX_ANNUAL_DAYS, MIN_ANNUAL_DAYS, AnnualFact
+from meridian.data.ttm import TTMSnapshot
 
 FINANCIAL_SIC_MIN = 6000  # finance, banking, brokerage, insurance
 FINANCIAL_SIC_MAX = 6411
@@ -97,7 +100,6 @@ def compute_metrics(
     out: list[PeriodMetrics] = []
     for end in ends:
         facts_here = [d[end] for d in by_end.values() if end in d]
-        available_from = max(f.filed for f in facts_here)
 
         def at(metric: str) -> AnnualFact | None:
             return by_end.get(metric, {}).get(end)
@@ -105,6 +107,10 @@ def compute_metrics(
         revenue, net_income, op_income = at("revenue"), at("net_income"), at("operating_income")
         ocf, capex = at("operating_cash_flow"), at("capex")
         liabilities, equity = at("total_liabilities"), at("stockholders_equity")
+        anchor = net_income or revenue
+        available_from = (
+            anchor.filed if anchor is not None else max(f.filed for f in facts_here)
+        )
 
         def val(f: AnnualFact | None) -> float | None:
             return None if f is None else f.value
@@ -155,3 +161,28 @@ def compute_metrics(
             )
         )
     return out
+
+
+def ttm_summary(snapshot: TTMSnapshot | None, is_financial: bool = False) -> dict | None:
+    """Trailing-twelve-month figures and margins for display (basis tells which)."""
+    if snapshot is None:
+        return None
+    v = snapshot.values
+    revenue, ni, op = v.get("revenue"), v.get("net_income"), v.get("operating_income")
+    ocf, capex = v.get("operating_cash_flow"), v.get("capex")
+    fcf = None if is_financial or ocf is None or capex is None else ocf - capex
+    through = snapshot.ytd_end or snapshot.fy_end
+    return {
+        "basis": snapshot.basis,
+        "through": through.isoformat(),
+        "available_from": snapshot.available_from.isoformat(),
+        "revenue": revenue,
+        "net_income": ni,
+        "operating_income": op,
+        "operating_cash_flow": ocf,
+        "capex": capex,
+        "free_cash_flow": fcf,
+        "operating_margin": _ratio(op, revenue),
+        "net_margin": _ratio(ni, revenue),
+        "fcf_margin": _ratio(fcf, revenue),
+    }

@@ -13,8 +13,9 @@ from meridian.data.edgar import (
     NoFactsError,
     TickerNotFound,
 )
-from meridian.analysis.metrics import compute_metrics, is_financial_sic
+from meridian.analysis.metrics import compute_metrics, is_financial_sic, ttm_summary
 from meridian.analysis.valuation import compute_valuation, current_valuation
+from meridian.data.ttm import extract_ttm
 from meridian.data.fundamentals import (
     extract_annual,
     extract_cover_shares,
@@ -163,8 +164,11 @@ ANALYSIS_NOTES = [
     "through finance leases, so it is overstated for lease-heavy companies.",
     "ROE uses average equity when the prior year is available. liabilities_to_equity "
     "is total liabilities over equity (not interest-bearing debt).",
-    "Values are as first reported; available_from is when every figure for the "
-    "period was public.",
+    "Values are as first reported; available_from is the filing date of the 10-K "
+    "that published the period's results.",
+    "The ttm block sums the last fiscal year and the current year-to-date, minus the "
+    "prior-year year-to-date (from the same 10-Q); basis shows 'annual' when no newer "
+    "10-Q exists. Metrics missing any component are omitted.",
 ]
 
 
@@ -217,6 +221,7 @@ def analysis(
         "sic_description": sic_description,
         "is_financial": financial,
         "notes": notes,
+        "ttm": ttm_summary(extract_ttm(facts, annual), financial),
         "periods": periods,
     }
 
@@ -230,8 +235,10 @@ VALUATION_NOTES = [
     "(shares_source = diluted_average).",
     "Prices are split-adjusted but not dividend-adjusted. price_then is the actual "
     "closing price that day.",
-    "Ratios use annual (not trailing-twelve-month) fundamentals, so the current "
-    "block can lag the latest quarter by up to a year.",
+    "Per-year ratios use that fiscal year's annual figures. The current block uses "
+    "trailing-twelve-month figures when a newer 10-Q exists (basis = ttm, with the "
+    "latest 10-Q cover-page share count and balance sheet); annual_pe is kept for "
+    "comparison.",
 ]
 
 
@@ -269,6 +276,7 @@ def valuation(
 
     annual = extract_annual(facts)
     covers = extract_cover_shares(facts)
+    covers_latest = extract_cover_shares(facts, forms=("10-K", "10-Q"))
     window = recent_periods(annual, years)
     periods = [
         p.to_dict()
@@ -281,6 +289,9 @@ def valuation(
         "entity_name": facts.get("entityName"),
         "is_financial": financial,
         "notes": notes,
-        "current": current_valuation(annual, covers, prices, is_financial=financial),
+        "current": current_valuation(
+            annual, covers_latest, prices, is_financial=financial,
+            ttm=extract_ttm(facts, annual),
+        ),
         "periods": periods,
     }
